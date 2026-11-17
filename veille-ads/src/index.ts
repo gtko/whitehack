@@ -255,7 +255,7 @@ export default {
           const results = await Promise.all(names.map(name => runScraper(name, env)));
           return json({ status: "scan_completed", results });
         } finally {
-          await env.KV.delete(SCAN_LOCK_KEY);
+          await env.KV.delete(SCAN_LOCK_KEY).catch(e => console.warn("[SCAN] libération du verrou échouée", e));
         }
       }
 

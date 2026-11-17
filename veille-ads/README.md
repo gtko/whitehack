@@ -131,7 +131,7 @@ Sans `ADMIN_TOKEN` configuré, les routes POST répondent 503 ; sans le bon Bear
 | `/api/pages` | GET | Snapshots de pages (changements) |
 | `/api/alerts` | GET | Alertes non acquittées |
 | `/api/analyze` | POST | Analyser une ad spécifique (JSON body, Bearer `ADMIN_TOKEN`) |
-| `/api/scan` | POST | Déclencher un scan manuel (Bearer `ADMIN_TOKEN`) |
+| `/api/scan` | POST | Scan manuel synchrone (Bearer `ADMIN_TOKEN`) : renvoie `results` après quelques dizaines de secondes ; 409 si un scan tourne déjà (verrou 10 min max) |
 
 ---
 
@@ -201,7 +201,7 @@ veille-ads/
 └── src/
     ├── index.ts           # Worker principal (routes + cron)
     ├── analyzer.ts        # Analyse stratégique (angles/keywords/personas)
-    └── browser.ts         # Browser Rendering wrapper (anti-détection)
+    └── browser.ts         # Browser Rendering wrapper (navigation sans contournement)
 ```
 
 ---
