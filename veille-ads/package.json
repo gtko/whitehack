@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute veille-ads --file=./schema.sql",
-    "db:local": "wrangler d1 execute veille-ads --local --file=./schema.sql",
-    "dashboard": "open https://veille.workers.dev/dashboard"
+    "typecheck": "tsc --noEmit",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "db:migrate": "wrangler d1 migrations apply veille-ads --remote",
+    "db:migrate:local": "wrangler d1 migrations apply veille-ads --local"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "^1.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
+    "@cloudflare/workers-types": "^5.20261117.1",
     "typescript": "^5.7.0",
-    "wrangler": "^3.100.0"
+    "wrangler": "^4.0.0"
   }
 }

@@ -1,22 +1,25 @@
 name = "veille-ads"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
-# ── Browser Rendering (scraping camoufflé) ──────────────
+# ── Browser Rendering (pages rendues JS) ────────────────
 [browser]
 binding = "BROWSER"
 
 # ── D1 Database (SQLite edge) ────────────────────────────
+# Schéma : migrations/0001_init.sql (npx wrangler d1 migrations apply veille-ads --remote)
 [[d1_databases]]
 binding = "DB"
 database_name = "veille-ads"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "b1c0e73d-f769-4ad9-b976-dde9f5f8ac79"
+migrations_dir = "migrations"
 
 # ── KV (cache + config) ─────────────────────────────────
 [[kv_namespaces]]
 binding = "KV"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "25f7fa84516945fca09d5057ad504b2d"
 
 # ── R2 (screenshots + archives) ─────────────────────────
 [[r2_buckets]]
@@ -27,16 +30,11 @@ bucket_name = "veille-ads-screenshots"
 [triggers]
 crons = [
   "0 */6 * * *",   # Toutes les 6h : Meta Ads + Trustpilot
-  "0 */12 * * *",  # Toutes les 12h : Google Ads + TikTok
+  "0 */12 * * *",  # Toutes les 12h : Google Ads Transparency
   "0 0 * * *",     # Quotidien : SERP + Pages
 ]
 
-# ── Routes ──────────────────────────────────────────────
-routes = [
-  { pattern = "veille.workers.dev/*", zone_name = "workers.dev" }
-]
-
-# ── Variables ───────────────────────────────────────────
+# ── Variables (non secrètes) ────────────────────────────
 [vars]
 TARGET_NAME = "Ruby Labs"
 TARGET_DOMAINS = "rubylabs.com,claritycheck.com,use.ai,hint.app,ableapp.com,cerebrumiq.com,myiq.com,getqr.com"
@@ -46,3 +44,13 @@ TRUSTPILOT_DOMAINS = "claritycheck.com,use.ai,hint.app,ableapp.com,mediamodifier
 PAGE_CHECK_URLS = "https://claritycheck.com/pricing,https://use.ai/en/pricing,https://hint.app/pricing,https://ableapp.com/pricing,https://rubylabs.com,https://modif.ai/en/pricing"
 WINNING_AD_MIN_DAYS = "7"
 CHANGE_THRESHOLD = "0.05"
+META_AD_COUNTRIES = "FR,DE,ES,IT,NL,BE"
+
+# ── Secrets (wrangler secret put, ne jamais les écrire ici) ──
+# ADMIN_TOKEN          : Bearer des routes POST (/api/scan, /api/analyze)
+# META_ACCESS_TOKEN    : token Meta Ad Library API
+# SERP_API_KEY         : clé Serper.dev (https://serper.dev)
+
+# ── Observabilité ───────────────────────────────────────
+[observability]
+enabled = true

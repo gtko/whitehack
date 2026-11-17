@@ -89,21 +89,30 @@ cd veille-ads
 # 1. Installer les dépendances
 npm install
 
-# 2. Initialiser la base D1
-wrangler d1 create veille-ads
-wrangler d1 execute veille-ads --file=./schema.sql
+# 2. Appliquer le schéma D1 (migrations/0001_init.sql)
+#    La base D1, le KV et le bucket R2 sont déjà référencés dans wrangler.toml.
+#    Compte neuf : npx wrangler d1 create veille-ads (puis reporter son database_id),
+#    npx wrangler kv namespace create KV, npx wrangler r2 bucket create veille-ads-screenshots.
+npx wrangler d1 migrations apply veille-ads --remote
 
-# 3. Créer le bucket R2
-wrangler r2 bucket create veille-ads-screenshots
+# 3. Définir les secrets (jamais dans wrangler.toml)
+npx wrangler secret put ADMIN_TOKEN        # Bearer des routes POST (/api/scan, /api/analyze)
+npx wrangler secret put META_ACCESS_TOKEN  # Meta Ad Library API
+npx wrangler secret put SERP_API_KEY       # clé Serper.dev (https://serper.dev)
 
-# 4. Créer le namespace KV
-wrangler kv namespace create KV
-
-# 5. Configurer wrangler.toml avec les IDs obtenus
-
-# 6. Déployer
-wrangler deploy
+# 4. Déployer
+npm run deploy
 ```
+
+Le Worker répond sur `https://veille-ads.<sous-domaine>.workers.dev` (URL affichée par `wrangler deploy`).
+
+Scan manuel (`$TOKEN` = valeur de `ADMIN_TOKEN`) :
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" https://veille-ads.<sous-domaine>.workers.dev/api/scan
+```
+
+Sans `ADMIN_TOKEN` configuré, les routes POST répondent 503 ; sans le bon Bearer, 401. Corps JSON optionnel pour ne lancer que certains scrapers : `{"scrapers": ["meta", "google", "trustpilot", "serp", "pages"]}`.
 
 ---
 
@@ -121,8 +130,8 @@ wrangler deploy
 | `/api/serp` | GET | Positions Google SERP |
 | `/api/pages` | GET | Snapshots de pages (changements) |
 | `/api/alerts` | GET | Alertes non acquittées |
-| `/api/analyze` | POST | Analyser une ad spécifique (JSON body) |
-| `/api/scan` | POST | Déclencher un scan manuel |
+| `/api/analyze` | POST | Analyser une ad spécifique (JSON body, Bearer `ADMIN_TOKEN`) |
+| `/api/scan` | POST | Scan manuel synchrone (Bearer `ADMIN_TOKEN`) : renvoie `results` après quelques dizaines de secondes ; 409 si un scan tourne déjà (verrou 10 min max) |
 
 ---
 
@@ -160,7 +169,7 @@ wrangler deploy
 | Fréquence | Tâche | Scrapers |
 |---|---|---|
 | `0 */6 * * *` | Toutes les 6h | Meta Ad Library, Trustpilot |
-| `0 */12 * * *` | Toutes les 12h | Google Ads Transparency, TikTok |
+| `0 */12 * * *` | Toutes les 12h | Google Ads Transparency |
 | `0 0 * * *` | Quotidien (minuit) | SERP Tracker, Page Monitor |
 
 ---
@@ -192,21 +201,28 @@ veille-ads/
 └── src/
     ├── index.ts           # Worker principal (routes + cron)
     ├── analyzer.ts        # Analyse stratégique (angles/keywords/personas)
-    └── browser.ts         # Browser Rendering wrapper (anti-détection)
+    └── browser.ts         # Browser Rendering wrapper (navigation sans contournement)
 ```
 
 ---
 
-## 🔒 Anti-détection
+## 🔒 Collecte responsable
 
-| Technique | Implémentation |
+| Principe | Implémentation |
 |---|---|
-| **Browser Rendering** | Cloudflare Browser Rendering (IPs edge partagées) |
-| **Fingerprint rotation** | UA, viewport, timezone, locale aléatoires |
-| **Headers humains** | Accept-Language, Sec-Ch-Ua, etc. |
-| **Délais aléatoires** | 1.5-4s entre chaque navigation |
-| **Screenshots R2** | Vérification visuelle sans markup |
-| **Retry automatique** | Restart avec nouveau fingerprint sur erreur |
+| **Sources officielles d'abord** | API Meta Ad Library, Serper.dev pour la SERP |
+| **Identité honnête** | User-Agent `veille-ads/1.0`, pas de spoofing d'UA ni de fingerprint |
+| **Respect des blocages** | 403 / 429 / CAPTCHA → alerte `scraper_blocked`, domaine ignoré, aucun contournement |
+| **Volume limité** | Un essai par page, timeout 15 s, crons espacés |
+| **Screenshots R2** | Vérification visuelle des pages Google Ads Transparency |
+
+---
+
+## ⚠️ Limites connues
+
+- **Google Ads** : les créas sont stockées avec le status `unknown` (le Transparency Center ne donne pas la date de fin de diffusion) ; elles ne sont donc pas comptées comme actives ni gagnantes.
+- **Trustpilot** : répond souvent 403 aux Workers ; le domaine concerné est alors ignoré avec une alerte (pas de contournement).
+- **Browser Rendering** : le scraper Google nécessite le plan Workers Paid.
 
 ---
 

@@ -14,13 +14,13 @@
  *   GET  /api/pages          → Snapshots de pages
  *   GET  /api/alerts         → Alertes non acquittées
  *   GET  /api/summary        → Résumé stratégique complet
- *   POST /api/scan           → Déclencher un scan manuel
- *   POST /api/analyze        → Analyser une ad spécifique
+ *   POST /api/scan           → Déclencher un scan manuel (Bearer ADMIN_TOKEN, corps optionnel {"scrapers": [...]})
+ *   POST /api/analyze        → Analyser une ad spécifique (Bearer ADMIN_TOKEN)
  * 
  * Cron:
- *   */6h  → Meta Ads + Trustpilot
- *   */12h → Google Ads + TikTok
- *   daily → SERP + Pages
+ *   toutes les 6 h → Meta Ads + Trustpilot
+ *   toutes les 12 h → Google Ads
+ *   quotidien (minuit) → SERP + Pages
  */
 
 import {
@@ -28,22 +28,8 @@ import {
   generateStrategicSummary,
   type AdInsight,
 } from "./analyzer";
-
-// ── Types Env ───────────────────────────────────────────
-interface Env {
-  DB: D1Database;
-  KV: KVNamespace;
-  R2: R2Bucket;
-  BROWSER: any;
-  TARGET_NAME: string;
-  TARGET_DOMAINS: string;
-  TARGET_AD_ACCOUNTS: string;
-  SERP_KEYWORDS: string;
-  TRUSTPILOT_DOMAINS: string;
-  PAGE_CHECK_URLS: string;
-  WINNING_AD_MIN_DAYS: string;
-  CHANGE_THRESHOLD: string;
-}
+import { type Env, nowIso, type ScraperName, type ScraperResult } from "./types";
+import { SCRAPERS } from "./scrapers";
 
 // ── Helpers ─────────────────────────────────────────────
 function json(data: unknown, status = 200): Response {
@@ -56,14 +42,78 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function csv(v: string): string[] {
-  return v.split(",").map(s => s.trim()).filter(Boolean);
+/** Scrapers lancés par cron, selon l'expression du cron (identique à [triggers] de wrangler.toml). */
+const CRON_SCRAPERS: Record<string, ScraperName[]> = {
+  "0 */6 * * *": ["meta", "trustpilot"],
+  "0 */12 * * *": ["google"],
+  "0 0 * * *": ["serp", "pages"],
+};
+
+const ALL_SCRAPERS = Object.keys(SCRAPERS) as ScraperName[];
+
+function isScraperName(v: unknown): v is ScraperName {
+  return typeof v === "string" && (ALL_SCRAPERS as string[]).includes(v);
 }
 
-async function hash(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+/** SHA-256 brut (32 octets), pour comparer deux secrets à temps constant. */
+async function sha256(text: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+}
+
+/** Compare deux chaînes via leurs hash SHA-256, octet par octet, sans sortie anticipée. */
+async function tokensMatch(provided: string, expected: string): Promise<boolean> {
+  const [a, b] = await Promise.all([sha256(provided), sha256(expected)]);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/** Renvoie une Response d'erreur si l'appelant ne présente pas le Bearer ADMIN_TOKEN, sinon null. */
+async function requireAdmin(request: Request, env: Env): Promise<Response | null> {
+  if (!env.ADMIN_TOKEN) {
+    return json({ error: "ADMIN_TOKEN non configuré" }, 503);
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") ?? "");
+  if (!(await tokensMatch(match ? match[1] : "", env.ADMIN_TOKEN))) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  return null;
+}
+
+/** Corps optionnel de POST /api/scan : {"scrapers": [...]}. Renvoie la liste à lancer ou une Response 400. */
+async function parseScanBody(request: Request): Promise<ScraperName[] | Response> {
+  const raw = (await request.text()).trim();
+  if (raw === "") return ALL_SCRAPERS;
+  let body: { scrapers?: unknown } | null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return json({ error: "Corps JSON invalide" }, 400);
+  }
+  const requested = body?.scrapers;
+  if (requested === undefined) return ALL_SCRAPERS;
+  if (!Array.isArray(requested) || requested.length === 0 || !requested.every(isScraperName)) {
+    return json({ error: `scrapers doit être une liste non vide parmi : ${ALL_SCRAPERS.join(", ")}` }, 400);
+  }
+  return [...new Set(requested)];
+}
+
+/** Verrou KV anti-rejeu de POST /api/scan (expire seul après 10 min). */
+const SCAN_LOCK_KEY = "scan_lock";
+
+/** Lance un scraper ; une erreur levée devient un ScraperResult ok:false, jamais remontée au runtime. */
+async function runScraper(name: ScraperName, env: Env): Promise<ScraperResult> {
+  try {
+    return await SCRAPERS[name](env);
+  } catch (e) {
+    console.error(`[${name}] échec`, e);
+    return { scraper: name, ok: false, inserted: 0, updated: 0, errors: [String(e)] };
+  }
+}
+
+/** Lance un scraper (cron) et logge son résultat (JSON). */
+async function runOne(name: ScraperName, env: Env): Promise<void> {
+  console.log(JSON.stringify(await runScraper(name, env)));
 }
 
 // ── Worker ──────────────────────────────────────────────
@@ -79,7 +129,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
     }
@@ -93,7 +143,7 @@ export default {
       // ── API Routes ─────────────────────────────────
       if (path === "/api/ads" && method === "GET") {
         const platform = url.searchParams.get("platform");
-        const limit = parseInt(url.searchParams.get("limit") || "100");
+        const limit = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 100, 1), 500);
         let query = "SELECT * FROM ads ORDER BY first_seen DESC LIMIT ?";
         let params: unknown[] = [limit];
         if (platform) {
@@ -105,7 +155,6 @@ export default {
       }
 
       if (path === "/api/ads/winners" && method === "GET") {
-        const minDays = parseInt(env.WINNING_AD_MIN_DAYS || "7");
         const results = await env.DB.prepare(
           "SELECT * FROM ads WHERE is_winner = 1 AND status = 'active' ORDER BY days_active DESC LIMIT 50"
         ).all();
@@ -152,6 +201,8 @@ export default {
       }
 
       if (path === "/api/analyze" && method === "POST") {
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
         const body = await request.json() as { headline: string; body: string; cta: string; landing_url: string };
         const insight = analyzeAd(body);
         return json(insight);
@@ -191,36 +242,40 @@ export default {
       }
 
       if (path === "/api/scan" && method === "POST") {
-        // Déclencher un scan manuel (retourne immédiatement, le scan tourne en arrière-plan)
-        return json({ status: "scan_triggered", message: "Scan lancé en arrière-plan" });
+        // Scrapers attendus avant de répondre : pas de ctx.waitUntil (le travail est tué ~30 s après la réponse).
+        const denied = await requireAdmin(request, env);
+        if (denied) return denied;
+        const names = await parseScanBody(request);
+        if (names instanceof Response) return names;
+        if (await env.KV.get(SCAN_LOCK_KEY)) {
+          return json({ error: "Scan déjà en cours" }, 409);
+        }
+        await env.KV.put(SCAN_LOCK_KEY, nowIso(), { expirationTtl: 600 });
+        try {
+          const results = await Promise.all(names.map(name => runScraper(name, env)));
+          return json({ status: "scan_completed", results });
+        } finally {
+          await env.KV.delete(SCAN_LOCK_KEY).catch(e => console.warn("[SCAN] libération du verrou échouée", e));
+        }
       }
 
       return json({ error: "Not found" }, 404);
 
-    } catch (e: any) {
-      return json({ error: e.message }, 500);
+    } catch (e) {
+      console.error("[fetch] erreur non gérée", e);
+      return json({ error: "Internal error" }, 500);
     }
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    // ── Cron: les scrapers tournent selon la schedule ──
-    const hour = new Date().getUTCHours();
-
-    // Toutes les 6h (0, 6, 12, 18) : Meta Ads
-    if (hour % 6 === 0) {
-      ctx.waitUntil(runMetaScraper(env));
+    // event.cron désigne les scrapers à lancer (table CRON_SCRAPERS)
+    const names = CRON_SCRAPERS[event.cron] ?? [];
+    if (names.length === 0) {
+      console.warn(JSON.stringify({ cron: event.cron, warning: "aucun scraper pour ce cron" }));
+      return;
     }
-
-    // Toutes les 12h (0, 12) : Google Ads
-    if (hour % 12 === 0) {
-      ctx.waitUntil(runGoogleScraper(env));
-    }
-
-    // Quotidien (minuit) : SERP + Pages + Trustpilot
-    if (hour === 0) {
-      ctx.waitUntil(runSERPTracker(env));
-      ctx.waitUntil(runPageMonitor(env));
-      ctx.waitUntil(runTrustpilotScraper(env));
+    for (const name of names) {
+      ctx.waitUntil(runOne(name, env));
     }
   },
 };
@@ -414,31 +469,3 @@ new Chart(document.getElementById('personaChart'), {
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-// ── Scrapers (simplifiés pour le Worker) ───────────────
-async function runMetaScraper(env: Env): Promise<void> {
-  console.log("[CRON] Running Meta Ad Library scraper...");
-  // TODO: implémenter avec env.BROWSER (Cloudflare Browser Rendering)
-  // Pour chaque advertiser dans TARGET_AD_ACCOUNTS
-  // → navigate to facebook.com/ads/library/?q=advertiser
-  // → extract ads → save to D1 → run analyzer
-}
-
-async function runGoogleScraper(env: Env): Promise<void> {
-  console.log("[CRON] Running Google Ads Transparency scraper...");
-  // TODO: adstransparency.google.com
-}
-
-async function runTrustpilotScraper(env: Env): Promise<void> {
-  console.log("[CRON] Running Trustpilot scraper...");
-  // TODO: trustpilot.com/review/domain
-}
-
-async function runSERPTracker(env: Env): Promise<void> {
-  console.log("[CRON] Running SERP tracker...");
-  // TODO: google.com/search?q=keyword
-}
-
-async function runPageMonitor(env: Env): Promise<void> {
-  console.log("[CRON] Running page monitor...");
-  // TODO: hash-based change detection on PAGE_CHECK_URLS
-}
