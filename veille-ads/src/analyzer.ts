@@ -216,7 +216,7 @@ const ANGLE_PATTERNS: Record<AngleType, { keywords: string[]; regex: RegExp[] }>
   },
   identity: {
     keywords: ["for smart", "for real", "for men", "for women", "for people who", "if you're the type", "designed for"],
-    regex: [/(?:for\s+(?:smart|real|men|women|people|those|you)/gi],
+    regex: [/(?:for\s+(?:smart|real|men|women|people|those|you))/gi],
   },
   scarcity: {
     keywords: ["only", "exclusive", "limited", "few left", "invitation only", "waitlist", "select"],

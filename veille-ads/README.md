@@ -89,21 +89,30 @@ cd veille-ads
 # 1. Installer les dépendances
 npm install
 
-# 2. Initialiser la base D1
-wrangler d1 create veille-ads
-wrangler d1 execute veille-ads --file=./schema.sql
+# 2. Appliquer le schéma D1 (migrations/0001_init.sql)
+#    La base D1, le KV et le bucket R2 sont déjà référencés dans wrangler.toml.
+#    Compte neuf : npx wrangler d1 create veille-ads (puis reporter son database_id),
+#    npx wrangler kv namespace create KV, npx wrangler r2 bucket create veille-ads-screenshots.
+npx wrangler d1 migrations apply veille-ads --remote
 
-# 3. Créer le bucket R2
-wrangler r2 bucket create veille-ads-screenshots
+# 3. Définir les secrets (jamais dans wrangler.toml)
+npx wrangler secret put ADMIN_TOKEN        # Bearer des routes POST (/api/scan, /api/analyze)
+npx wrangler secret put META_ACCESS_TOKEN  # Meta Ad Library API
+npx wrangler secret put SERP_API_KEY       # clé Serper.dev (https://serper.dev)
 
-# 4. Créer le namespace KV
-wrangler kv namespace create KV
-
-# 5. Configurer wrangler.toml avec les IDs obtenus
-
-# 6. Déployer
-wrangler deploy
+# 4. Déployer
+npm run deploy
 ```
+
+Le Worker répond sur `https://veille-ads.<sous-domaine>.workers.dev` (URL affichée par `wrangler deploy`).
+
+Scan manuel (`$TOKEN` = valeur de `ADMIN_TOKEN`) :
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" https://veille-ads.<sous-domaine>.workers.dev/api/scan
+```
+
+Sans `ADMIN_TOKEN` configuré, les routes POST répondent 503 ; sans le bon Bearer, 401. Corps JSON optionnel pour ne lancer que certains scrapers : `{"scrapers": ["meta", "google", "trustpilot", "serp", "pages"]}`.
 
 ---
 
@@ -121,8 +130,8 @@ wrangler deploy
 | `/api/serp` | GET | Positions Google SERP |
 | `/api/pages` | GET | Snapshots de pages (changements) |
 | `/api/alerts` | GET | Alertes non acquittées |
-| `/api/analyze` | POST | Analyser une ad spécifique (JSON body) |
-| `/api/scan` | POST | Déclencher un scan manuel |
+| `/api/analyze` | POST | Analyser une ad spécifique (JSON body, Bearer `ADMIN_TOKEN`) |
+| `/api/scan` | POST | Déclencher un scan manuel (Bearer `ADMIN_TOKEN`) |
 
 ---
 
