@@ -216,14 +216,6 @@ veille-ads/
 | **Volume limité** | Un essai par page, timeout 15 s, crons espacés |
 | **Screenshots R2** | Vérification visuelle des pages Google Ads Transparency |
 
----|---|
-| **Browser Rendering** | Cloudflare Browser Rendering (IPs edge partagées) |
-| **Fingerprint rotation** | UA, viewport, timezone, locale aléatoires |
-| **Headers humains** | Accept-Language, Sec-Ch-Ua, etc. |
-| **Délais aléatoires** | 1.5-4s entre chaque navigation |
-| **Screenshots R2** | Vérification visuelle sans markup |
-| **Retry automatique** | Restart avec nouveau fingerprint sur erreur |
-
 ---
 
 ## ⚠️ Limites connues
