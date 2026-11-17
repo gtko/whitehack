@@ -169,7 +169,7 @@ Sans `ADMIN_TOKEN` configuré, les routes POST répondent 503 ; sans le bon Bear
 | Fréquence | Tâche | Scrapers |
 |---|---|---|
 | `0 */6 * * *` | Toutes les 6h | Meta Ad Library, Trustpilot |
-| `0 */12 * * *` | Toutes les 12h | Google Ads Transparency, TikTok |
+| `0 */12 * * *` | Toutes les 12h | Google Ads Transparency |
 | `0 0 * * *` | Quotidien (minuit) | SERP Tracker, Page Monitor |
 
 ---
@@ -206,10 +206,17 @@ veille-ads/
 
 ---
 
-## 🔒 Anti-détection
+## 🔒 Collecte responsable
 
-| Technique | Implémentation |
+| Principe | Implémentation |
 |---|---|
+| **Sources officielles d'abord** | API Meta Ad Library, Serper.dev pour la SERP |
+| **Identité honnête** | User-Agent `veille-ads/1.0`, pas de spoofing d'UA ni de fingerprint |
+| **Respect des blocages** | 403 / 429 / CAPTCHA → alerte `scraper_blocked`, domaine ignoré, aucun contournement |
+| **Volume limité** | Un essai par page, timeout 15 s, crons espacés |
+| **Screenshots R2** | Vérification visuelle des pages Google Ads Transparency |
+
+---|---|
 | **Browser Rendering** | Cloudflare Browser Rendering (IPs edge partagées) |
 | **Fingerprint rotation** | UA, viewport, timezone, locale aléatoires |
 | **Headers humains** | Accept-Language, Sec-Ch-Ua, etc. |
