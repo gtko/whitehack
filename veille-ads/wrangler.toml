@@ -1,0 +1,48 @@
+name = "veille-ads"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Browser Rendering (scraping camoufflé) ──────────────
+[browser]
+binding = "BROWSER"
+
+# ── D1 Database (SQLite edge) ────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "veille-ads"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# ── KV (cache + config) ─────────────────────────────────
+[[kv_namespaces]]
+binding = "KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+# ── R2 (screenshots + archives) ─────────────────────────
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "veille-ads-screenshots"
+
+# ── Cron Triggers (monitoring permanent) ─────────────────
+[triggers]
+crons = [
+  "0 */6 * * *",   # Toutes les 6h : Meta Ads + Trustpilot
+  "0 */12 * * *",  # Toutes les 12h : Google Ads + TikTok
+  "0 0 * * *",     # Quotidien : SERP + Pages
+]
+
+# ── Routes ──────────────────────────────────────────────
+routes = [
+  { pattern = "veille.workers.dev/*", zone_name = "workers.dev" }
+]
+
+# ── Variables ───────────────────────────────────────────
+[vars]
+TARGET_NAME = "Ruby Labs"
+TARGET_DOMAINS = "rubylabs.com,claritycheck.com,use.ai,hint.app,ableapp.com,cerebrumiq.com,myiq.com,getqr.com"
+TARGET_AD_ACCOUNTS = "Ruby Labs,ClarityCheck,Use AI,Hint,Able,Cerebrum IQ,MyIQ"
+SERP_KEYWORDS = "claritycheck review,use.ai pricing,hint astrology app,able weight loss app,cerebrum iq test,myiq test,reverse phone lookup,background check online"
+TRUSTPILOT_DOMAINS = "claritycheck.com,use.ai,hint.app,ableapp.com,mediamodifier.com"
+PAGE_CHECK_URLS = "https://claritycheck.com/pricing,https://use.ai/en/pricing,https://hint.app/pricing,https://ableapp.com/pricing,https://rubylabs.com,https://modif.ai/en/pricing"
+WINNING_AD_MIN_DAYS = "7"
+CHANGE_THRESHOLD = "0.05"
