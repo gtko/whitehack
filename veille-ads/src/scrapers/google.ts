@@ -61,7 +61,7 @@ async function scrapeDomain(env: Env, page: Page, domain: string, day: string): 
     return { kind: "error", message: errorMessage(e) };
   }
   if (html === null) {
-    return { kind: "error", message: "page inaccessible après 2 essais" };
+    return { kind: "error", message: "page inaccessible" };
   }
   if (looksBlocked(html)) {
     return { kind: "blocked", reason: "CAPTCHA ou trafic inhabituel détecté" };

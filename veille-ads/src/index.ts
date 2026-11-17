@@ -28,7 +28,7 @@ import {
   generateStrategicSummary,
   type AdInsight,
 } from "./analyzer";
-import { type Env, csv, hash, type ScraperName, type ScraperResult } from "./types";
+import { type Env, nowIso, type ScraperName, type ScraperResult } from "./types";
 import { SCRAPERS } from "./scrapers";
 
 // ── Helpers ─────────────────────────────────────────────
@@ -98,21 +98,27 @@ async function parseScanBody(request: Request): Promise<ScraperName[] | Response
   return [...new Set(requested)];
 }
 
-/** Lance un scraper et logge son résultat (JSON) ; une erreur est logguée, jamais remontée au runtime. */
-async function runOne(name: ScraperName, env: Env): Promise<void> {
-  let result: ScraperResult;
+/** Verrou KV anti-rejeu de POST /api/scan (expire seul après 10 min). */
+const SCAN_LOCK_KEY = "scan_lock";
+
+/** Lance un scraper ; une erreur levée devient un ScraperResult ok:false, jamais remontée au runtime. */
+async function runScraper(name: ScraperName, env: Env): Promise<ScraperResult> {
   try {
-    result = await SCRAPERS[name](env);
+    return await SCRAPERS[name](env);
   } catch (e) {
     console.error(`[${name}] échec`, e);
-    result = { scraper: name, ok: false, inserted: 0, updated: 0, errors: [String(e)] };
+    return { scraper: name, ok: false, inserted: 0, updated: 0, errors: [String(e)] };
   }
-  console.log(JSON.stringify(result));
+}
+
+/** Lance un scraper (cron) et logge son résultat (JSON). */
+async function runOne(name: ScraperName, env: Env): Promise<void> {
+  console.log(JSON.stringify(await runScraper(name, env)));
 }
 
 // ── Worker ──────────────────────────────────────────────
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -137,7 +143,7 @@ export default {
       // ── API Routes ─────────────────────────────────
       if (path === "/api/ads" && method === "GET") {
         const platform = url.searchParams.get("platform");
-        const limit = parseInt(url.searchParams.get("limit") || "100");
+        const limit = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 100, 1), 500);
         let query = "SELECT * FROM ads ORDER BY first_seen DESC LIMIT ?";
         let params: unknown[] = [limit];
         if (platform) {
@@ -149,7 +155,6 @@ export default {
       }
 
       if (path === "/api/ads/winners" && method === "GET") {
-        const minDays = parseInt(env.WINNING_AD_MIN_DAYS || "7");
         const results = await env.DB.prepare(
           "SELECT * FROM ads WHERE is_winner = 1 AND status = 'active' ORDER BY days_active DESC LIMIT 50"
         ).all();
@@ -237,13 +242,21 @@ export default {
       }
 
       if (path === "/api/scan" && method === "POST") {
-        // Répond 202 tout de suite ; chaque scraper tourne ensuite via ctx.waitUntil
+        // Scrapers attendus avant de répondre : pas de ctx.waitUntil (le travail est tué ~30 s après la réponse).
         const denied = await requireAdmin(request, env);
         if (denied) return denied;
         const names = await parseScanBody(request);
         if (names instanceof Response) return names;
-        ctx.waitUntil(Promise.allSettled(names.map(name => runOne(name, env))));
-        return json({ status: "scan_triggered", scrapers: names }, 202);
+        if (await env.KV.get(SCAN_LOCK_KEY)) {
+          return json({ error: "Scan déjà en cours" }, 409);
+        }
+        await env.KV.put(SCAN_LOCK_KEY, nowIso(), { expirationTtl: 600 });
+        try {
+          const results = await Promise.all(names.map(name => runScraper(name, env)));
+          return json({ status: "scan_completed", results });
+        } finally {
+          await env.KV.delete(SCAN_LOCK_KEY);
+        }
       }
 
       return json({ error: "Not found" }, 404);

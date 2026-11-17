@@ -7,13 +7,11 @@
  * contrôle) est détecté, signalé et le scraper s'arrête.
  */
 import puppeteer, { type Page } from "@cloudflare/puppeteer";
-import { hash, type Env } from "./types";
+import type { Env } from "./types";
 
 export type { Page };
 
 const VIEWPORT = { width: 1366, height: 768 };
-const MAX_ATTEMPTS = 2;
-const RETRY_DELAY_MS = 3000;
 
 /** Marqueurs de blocage recherchés dans le HTML visible (scripts et styles exclus). */
 const BLOCK_MARKERS: RegExp[] = [/captcha/i, /unusual traffic/i, /\/sorry\//i, /access denied/i];
@@ -38,10 +36,6 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 /**
  * Ouvre une page Browser Rendering, exécute `fn`, puis ferme le navigateur
  * (même en cas d'erreur).
@@ -58,30 +52,26 @@ export async function withPage<T>(env: Env, fn: (page: Page) => Promise<T>): Pro
 }
 
 /**
- * Charge `url` et renvoie le HTML rendu, ou null après 2 essais échoués.
+ * Charge `url` en un seul essai (timeout 15 s) et renvoie le HTML rendu, ou null si le chargement échoue.
  * Lève BlockedError sur HTTP 403/429 ou redirection vers une page de contrôle :
  * un blocage n'est pas réessayé.
  */
-export async function gotoContent(page: Page, url: string, timeoutMs = 30000): Promise<string | null> {
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    let status: number | undefined;
-    try {
-      const response = await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
-      status = response?.status();
-    } catch (e) {
-      console.warn(`[browser] chargement essai ${attempt}/${MAX_ATTEMPTS} échoué : ${errorMessage(e)}`);
-      if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS);
-      continue;
-    }
-    if (status === 403 || status === 429) {
-      throw new BlockedError(url, `HTTP ${status}`);
-    }
-    if (BLOCKED_URL.test(page.url())) {
-      throw new BlockedError(url, "redirection vers une page de contrôle");
-    }
-    return await page.content();
+export async function gotoContent(page: Page, url: string, timeoutMs = 15000): Promise<string | null> {
+  let status: number | undefined;
+  try {
+    const response = await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
+    status = response?.status();
+  } catch (e) {
+    console.warn(`[browser] chargement échoué : ${errorMessage(e)}`);
+    return null;
   }
-  return null;
+  if (status === 403 || status === 429) {
+    throw new BlockedError(url, `HTTP ${status}`);
+  }
+  if (BLOCKED_URL.test(page.url())) {
+    throw new BlockedError(url, "redirection vers une page de contrôle");
+  }
+  return await page.content();
 }
 
 /**
@@ -106,30 +96,4 @@ export async function saveScreenshot(env: Env, page: Page, key: string): Promise
     console.warn(`[browser] capture ${key} échouée : ${errorMessage(e)}`);
     return null;
   }
-}
-
-/** Texte visible d'une page. */
-export async function extractText(page: Page): Promise<string> {
-  return (await page.evaluate("document.body?.innerText || document.body?.textContent || ''")) as string;
-}
-
-/** Prix détectés dans un texte (regex). */
-export function extractPrices(text: string): string[] {
-  const patterns = [
-    /[\d]+[.,][\d]+\s*[€$£]/g,
-    /[\$€£]\s*[\d]+[.,][\d]*/g,
-    /[\d]+\s*€/g,
-    /[\d]+\s*\/\s*(?:month|mois|week|semaine|4 weeks|4 semaines)/gi,
-  ];
-  const prices = new Set<string>();
-  for (const p of patterns) {
-    const matches = text.match(p) || [];
-    matches.forEach(m => prices.add(m.trim()));
-  }
-  return Array.from(prices);
-}
-
-/** Empreinte SHA-256 tronquée à 16 hex. */
-export function contentHash(text: string): Promise<string> {
-  return hash(text);
 }

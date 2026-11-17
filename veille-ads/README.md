@@ -219,6 +219,14 @@ veille-ads/
 
 ---
 
+## ⚠️ Limites connues
+
+- **Google Ads** : les créas sont stockées avec le status `unknown` (le Transparency Center ne donne pas la date de fin de diffusion) ; elles ne sont donc pas comptées comme actives ni gagnantes.
+- **Trustpilot** : répond souvent 403 aux Workers ; le domaine concerné est alors ignoré avec une alerte (pas de contournement).
+- **Browser Rendering** : le scraper Google nécessite le plan Workers Paid.
+
+---
+
 ## 🆓 Comparaison Coûts
 
 | Alternative SaaS | Prix | Ce système |

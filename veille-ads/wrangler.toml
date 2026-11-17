@@ -4,7 +4,7 @@ compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
-# ── Browser Rendering (scraping camoufflé) ──────────────
+# ── Browser Rendering (pages rendues JS) ────────────────
 [browser]
 binding = "BROWSER"
 
@@ -30,7 +30,7 @@ bucket_name = "veille-ads-screenshots"
 [triggers]
 crons = [
   "0 */6 * * *",   # Toutes les 6h : Meta Ads + Trustpilot
-  "0 */12 * * *",  # Toutes les 12h : Google Ads + TikTok
+  "0 */12 * * *",  # Toutes les 12h : Google Ads Transparency
   "0 0 * * *",     # Quotidien : SERP + Pages
 ]
 

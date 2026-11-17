@@ -2,7 +2,7 @@
  * VEILLE ADS — écriture des créas dans la table `ads` (upsert sur content_hash).
  * Partagé par les scrapers Meta et Google.
  */
-import { createAlert, type Env } from "../types";
+import type { Env } from "../types";
 
 export interface AdRow {
   platform: "meta" | "google";
@@ -105,22 +105,45 @@ export async function upsertAds(env: Env, input: AdRow[]): Promise<UpsertResult>
   return { inserted, updated, newWinners };
 }
 
-/** Une alerte `winning_ad` (info) par créa devenue gagnante. */
+const MAX_WINNER_ALERTS = 5; // au-delà, une seule alerte récapitulative
+const RECAP_SAMPLE = 20; // créas détaillées dans l'alerte récapitulative
+
+/**
+ * Alertes `winning_ad` (info) pour les créas devenues gagnantes.
+ * Jusqu'à MAX_WINNER_ALERTS : une alerte par créa, écrites en un seul batch D1.
+ * Au-delà : une seule alerte récapitulative, avec les RECAP_SAMPLE premières dans `data`.
+ */
 export async function alertWinners(env: Env, winners: AdRow[]): Promise<void> {
-  for (const w of winners) {
-    await createAlert(
-      env,
+  if (winners.length === 0) return;
+  const alertStatement = (message: string, data: unknown) =>
+    env.DB.prepare("INSERT INTO alerts (alert_type, severity, message, data) VALUES (?, ?, ?, ?)").bind(
       "winning_ad",
       "info",
-      `Nouvelle pub gagnante ${w.platform} : ${w.advertiser ?? "annonceur inconnu"} (${w.days_active} j)`,
-      {
-        platform: w.platform,
-        ad_id: w.ad_id,
-        advertiser: w.advertiser,
-        domain: w.domain,
-        days_active: w.days_active,
-        creative_url: w.creative_url,
-      },
+      message,
+      JSON.stringify(data),
     );
+
+  if (winners.length <= MAX_WINNER_ALERTS) {
+    await env.DB.batch(
+      winners.map(w =>
+        alertStatement(
+          `Nouvelle pub gagnante ${w.platform} : ${w.advertiser ?? "annonceur inconnu"} (${w.days_active} j)`,
+          {
+            platform: w.platform,
+            ad_id: w.ad_id,
+            advertiser: w.advertiser,
+            domain: w.domain,
+            days_active: w.days_active,
+            creative_url: w.creative_url,
+          },
+        ),
+      ),
+    );
+    return;
   }
+
+  await alertStatement(
+    `${winners.length} nouvelles pubs gagnantes (voir data)`,
+    winners.slice(0, RECAP_SAMPLE).map(w => ({ ad_id: w.ad_id, advertiser: w.advertiser, headline: w.headline })),
+  ).run();
 }
